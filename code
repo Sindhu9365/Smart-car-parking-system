@@ -1,0 +1,135 @@
+#include <ESP32Servo.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+// ========== LCD Setup ==========
+LiquidCrystal_I2C lcd(0x27, 16, 2); // If LCD doesn't show, try 0x3F
+
+// ========== Servo Setup ==========
+#define SERVO_PIN 4
+Servo gateServo;
+#define OPEN_POS 90
+#define CLOSE_POS 180
+
+// ========== Vehicle Detection Threshold ==========
+#define VEHICLE_THRESHOLD 5  // in cm
+
+// ========== Ultrasonic Sensor Pins ==========
+// Slot sensors
+#define SLOT1_TRIG 13
+#define SLOT1_ECHO 12
+#define SLOT2_TRIG 14
+#define SLOT2_ECHO 27
+
+// Entry & Exit gate sensors
+#define ENTRY_TRIG 26
+#define ENTRY_ECHO 25
+#define EXIT_TRIG 33
+#define EXIT_ECHO 32
+
+// ========== Distance Reading Function ==========
+long readDistance(int trigPin, int echoPin) {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  long duration = pulseIn(echoPin, HIGH, 30000); // Timeout 30ms
+  long distance = duration * 0.034 / 2;
+  return distance;
+}
+
+// ========== Vehicle Detection ==========
+bool isVehicleDetected(int trig, int echo) {
+  return readDistance(trig, echo) < VEHICLE_THRESHOLD;
+}
+
+// ========== Gate Control ==========
+void openGate() {
+  gateServo.write(OPEN_POS);
+  delay(3000);
+  gateServo.write(CLOSE_POS);
+}
+
+// ========== Setup ==========
+void setup() {
+  Serial.begin(115200);
+
+  // Servo
+  gateServo.attach(SERVO_PIN);
+  gateServo.write(CLOSE_POS);
+
+  // LCD
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(0, 0);
+  lcd.print("Smart Parking...");
+  delay(2000);
+  lcd.clear();
+
+  // Ultrasonic pins
+  pinMode(SLOT1_TRIG, OUTPUT);
+  pinMode(SLOT1_ECHO, INPUT);
+  pinMode(SLOT2_TRIG, OUTPUT);
+  pinMode(SLOT2_ECHO, INPUT);
+  pinMode(ENTRY_TRIG, OUTPUT);
+  pinMode(ENTRY_ECHO, INPUT);
+  pinMode(EXIT_TRIG, OUTPUT);
+  pinMode(EXIT_ECHO, INPUT);
+}
+
+// ========== Main Loop ==========
+void loop() {
+  // Read slot status
+  long slot1Dist = readDistance(SLOT1_TRIG, SLOT1_ECHO);
+  long slot2Dist = readDistance(SLOT2_TRIG, SLOT2_ECHO);
+  bool slot1Free = slot1Dist > VEHICLE_THRESHOLD;
+  bool slot2Free = slot2Dist > VEHICLE_THRESHOLD;
+  bool spaceAvailable = slot1Free || slot2Free;
+
+  // ====== Serial Debugging ======
+  Serial.print("Slot 1 Distance: ");
+  Serial.print(slot1Dist);
+  Serial.print(" cm - ");
+  Serial.println(slot1Free ? "Free" : "Occupied");
+
+  Serial.print("Slot 2 Distance: ");
+  Serial.print(slot2Dist);
+  Serial.print(" cm - ");
+  Serial.println(slot2Free ? "Free" : "Occupied");
+
+  // ====== LCD Update ======
+  // ====== LCD Update ======
+lcd.setCursor(0, 0);
+lcd.print("S1:");
+lcd.print(slot1Free ? "Free      " : "Present"); // padded to 10 chars
+
+lcd.setCursor(0, 1);
+lcd.print("S2:");
+lcd.print(slot2Free ? "Free      " : "Present"); // padded to 10 chars
+
+lcd.setCursor(10, 0);
+if (!spaceAvailable) {
+  lcd.print(" FULL ");
+} else {
+  lcd.print("     "); // Clear if not FULL
+}
+
+  // ====== Entry Logic ======
+  if (isVehicleDetected(ENTRY_TRIG, ENTRY_ECHO)) {
+    if (spaceAvailable) {
+      Serial.println("Vehicle at entry and space available → Opening gate");
+      openGate();
+    } else {
+      Serial.println("Vehicle at entry but slots are full → Gate stays closed");
+    }
+  }
+
+  // ====== Exit Logic ======
+  if (isVehicleDetected(EXIT_TRIG, EXIT_ECHO)) {
+    Serial.println("Vehicle at exit → Opening gate");
+    openGate();
+  }
+
+  delay(1000);  // Stability delay
+}
